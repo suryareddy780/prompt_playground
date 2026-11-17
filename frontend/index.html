@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prompt Testing & Versioning Playground</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f8fafc; --accent: #38bdf8; --green: #22c55e; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+    h1, h2, h3 { margin-top: 0; }
+    .container { max-width: 1200px; margin: 0 auto; display: grid; gap: 20px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+    label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; margin-top: 10px; }
+    input, textarea, select { width: 100%; box-sizing: border-box; background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font-family: inherit; }
+    textarea { min-height: 80px; resize: vertical; }
+    button { background: var(--accent); color: #0f172a; border: none; padding: 10px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+    button:hover { opacity: 0.9; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); }
+    .badge { padding: 3px 8px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; background: #0284c7; color: white; }
+    .pos { color: var(--green); font-weight: 600; }
+    pre { white-space: pre-wrap; background: #0f172a; padding: 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.85rem; }
+    .meta { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Prompt Debugging & Versioning Playground</h1>
+
+    <div class="grid-2">
+      <!-- Create New Prompt Version -->
+      <div class="card">
+        <h2>1. Save Prompt Version</h2>
+        <label>Project Name</label>
+        <input id="projectName" value="Customer Support Bot" />
+        <label>System Prompt</label>
+        <textarea id="systemPrompt">You are a concise, polite customer support specialist.</textarea>
+        <label>User Prompt Template (use {{input}} as placeholder)</label>
+        <textarea id="userTemplate">Resolve this customer ticket in 3 bullet points: {{input}}</textarea>
+        <label>Version Notes / Hypothesis</label>
+        <input id="notes" placeholder="e.g., Added 3-bullet formatting guardrail" />
+        <button onclick="saveVersion()">Save New Version (vN)</button>
+      </div>
+
+      <!-- Version History & Improvement Tracker -->
+      <div class="card">
+        <h2>2. Version History & Improvement Tracker</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Notes</th>
+              <th>Score (0-10)</th>
+              <th>Delta vs v1</th>
+            </tr>
+          </thead>
+          <tbody id="versionsTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Side-by-Side Comparison -->
+    <div class="card">
+      <h2>3. Side-by-Side A/B Prompt Comparison</h2>
+      <div class="grid-2">
+        <div>
+          <label>Version A (Baseline)</label>
+          <select id="selectA"></select>
+        </div>
+        <div>
+          <label>Version B (Candidate)</label>
+          <select id="selectB"></select>
+        </div>
+      </div>
+      <label>Test Input ({{input}})</label>
+      <input id="testInput" value="My order #4821 arrived damaged and I need a replacement." />
+      <button onclick="runComparison()">Run Side-by-Side Test</button>
+
+      <div class="grid-2" style="margin-top: 18px;">
+        <div>
+          <h3 id="titleA">Version A Output</h3>
+          <div class="meta" id="metaA"></div>
+          <pre id="outA">Run a comparison to inspect output...</pre>
+        </div>
+        <div>
+          <h3 id="titleB">Version B Output</h3>
+          <div class="meta" id="metaB"></div>
+          <pre id="outB">Run a comparison to inspect output...</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadVersions() {
+      const res = await fetch('/api/versions');
+      const versions = await res.json();
+      const tbody = document.getElementById('versionsTable');
+      const selA = document.getElementById('selectA');
+      const selB = document.getElementById('selectB');
+      tbody.innerHTML = '';
+      selA.innerHTML = '';
+      selB.innerHTML = '';
+
+      versions.forEach((v, idx) => {
+        const deltaSign = v.delta_vs_v1 > 0 ? '+' : '';
+        tbody.innerHTML += `
+          <tr>
+            <td><span class="badge">${v.version_tag}</span></td>
+            <td>${v.notes || v.user_template.slice(0, 35) + '...'}</td>
+            <td>
+              <input type="number" step="0.5" min="0" max="10" value="${v.quality_score}"
+                style="width:70px;padding:4px" onchange="updateScore(${v.id}, this.value)" />
+            </td>
+            <td class="${v.delta_vs_v1 > 0 ? 'pos' : ''}">${deltaSign}${v.delta_vs_v1}</td>
+          </tr>
+        `;
+        selA.innerHTML += `<option value="${v.id}">${v.version_tag} - ${v.notes || 'Prompt'}</option>`;
+        selB.innerHTML += `<option value="${v.id}" ${idx === versions.length - 1 ? 'selected' : ''}>${v.version_tag} - ${v.notes || 'Prompt'}</option>`;
+      });
+    }
+
+    async function saveVersion() {
+      await fetch('/api/versions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_name: document.getElementById('projectName').value,
+          system_prompt: document.getElementById('systemPrompt').value,
+          user_template: document.getElementById('userTemplate').value,
+          notes: document.getElementById('notes').value
+        })
+      });
+      document.getElementById('notes').value = '';
+      loadVersions();
+    }
+
+    async function updateScore(id, score) {
+      await fetch(`/api/versions/${id}/score`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quality_score: parseFloat(score) || 0 })
+      });
+      loadVersions();
+    }
+
+    async function runComparison() {
+      const res = await fetch('/api/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version_a_id: parseInt(document.getElementById('selectA').value),
+          version_b_id: parseInt(document.getElementById('selectB').value),
+          test_input: document.getElementById('testInput').value
+        })
+      });
+      const data = await res.json();
+      document.getElementById('titleA').innerText = `${data.version_a.tag} Output`;
+      document.getElementById('metaA').innerText = `Latency: ${data.version_a.latency_ms}ms | Words: ${data.version_a.word_count}`;
+      document.getElementById('outA').innerText = data.version_a.output;
+
+      document.getElementById('titleB').innerText = `${data.version_b.tag} Output`;
+      document.getElementById('metaB').innerText = `Latency: ${data.version_b.latency_ms}ms | Words: ${data.version_b.word_count}`;
+      document.getElementById('outB').innerText = data.version_b.output;
+    }
+
+    loadVersions();
+  </script>
+</body>
+</html>
